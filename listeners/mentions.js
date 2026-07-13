@@ -70,10 +70,12 @@ function register(app) {
   // Direct messages in the Messages tab — respond freely (no @mention needed),
   // mirroring the @mention streaming (loading status + streamed reveal + chart).
   app.event("message", async ({ event, client, logger }) => {
+    console.log(`[dm] message.im received: channel_type=${event.channel_type} subtype=${event.subtype} bot_id=${event.bot_id} text=${JSON.stringify(event.text)}`);
     if (event.channel_type !== "im") return;
     if (event.subtype || event.bot_id) return; // ignore edits, bot posts, joins
 
     try {
+      console.log("[dm] handling DM → responding");
       await respondInThread({
         client,
         logger,
@@ -83,8 +85,9 @@ function register(app) {
         rawText: event.text,
         user: event.user,
       });
+      console.log("[dm] response sent OK");
     } catch (error) {
-      logger.error("DM handler failed:", error);
+      console.error("[dm] DM handler failed:", error && error.data ? error.data : error);
     }
   });
 

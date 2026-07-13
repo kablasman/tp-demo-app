@@ -1,14 +1,18 @@
 // ---------------------------------------------------------------------------
 // Streaming + loading-state helper for the conversational bot
 // ---------------------------------------------------------------------------
-// Native-first, per https://docs.slack.dev/ai/developing-agents/#loading-state
-//   • Loading:   assistant.threads.setStatus (shown by the caller / respondInThread)
-//   • Streaming: chat.startStream → chat.appendStream* → chat.stopStream
-//     Blocks (charts/footer) are only allowed in stopStream, so they go there.
-// If the native streaming APIs aren't available (older SDK / feature off), we
-// fall back to an emulated reveal (post + progressive chat.update).
+// Slack's real token streaming (chat.startStream/appendStream/stopStream)
+// requires the Agents & Assistants feature enabled on the app. When that's not
+// available we emulate the experience: a held "loading" status, then the text
+// revealed in a few smooth steps with a subtle typing indicator (no block
+// cursor), then any chart blocks appended at the end.
+//
+// Set FAB_NATIVE_STREAM=1 to attempt the native streaming APIs instead.
+// https://docs.slack.dev/ai/developing-agents/
 // ---------------------------------------------------------------------------
 
+// Loading status shown while "analyzing", and the typing indicator shown
+// beneath partial text while it streams.
 const LOADING_BLOCK = {
   type: "context",
   elements: [{ type: "mrkdwn", text: ":hourglass_flowing_sand:  _Analyzing CX intelligence…_" }],
@@ -18,9 +22,9 @@ const TYPING_BLOCK = {
   elements: [{ type: "mrkdwn", text: ":writing_hand:  _typing…_" }],
 };
 
-const LOADING_HOLD_MS = 5000; // emulated fallback: keep loading visible ~5s
-const STEP_MS = 300; // emulated fallback: delay between reveal steps
-const MAX_STEPS = 3;
+const LOADING_HOLD_MS = 5000; // keep the loading status visible for 5s
+const STEP_MS = 300; // delay between reveal steps
+const MAX_STEPS = 3; // total reveal steps (keeps it snappy, avoids rate limits)
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,23 +34,8 @@ function plain(text) {
   return text.replace(/[*_>`]/g, "");
 }
 
-// Slack mrkdwn uses *single* asterisks for bold, but markdown_text (the
-// streaming format) reads *single* as italic — promote to **double**.
-function toMarkdown(text) {
-  return text.replace(/\*([^*\n]+)\*/g, "**$1**");
-}
-
-// Break text into cumulative chunks (append deltas) on line/paragraph
-// boundaries so words and bullets never split mid-token.
-function streamChunks(text) {
-  const paras = text.split("\n\n").filter((p) => p.length);
-  if (paras.length > 1) return paras.map((p, i) => (i ? "\n\n" : "") + p);
-  const lines = text.split("\n");
-  if (lines.length > 1) return lines.map((l, i) => (i ? "\n" : "") + l);
-  return [text];
-}
-
-// Break text into at most MAX_STEPS cumulative reveals (emulated fallback).
+// Break text into at most MAX_STEPS cumulative reveals, splitting on line
+// boundaries so we never cut a word or a bullet in half.
 function revealSteps(text) {
   const lines = text.split("\n");
   if (lines.length <= 1) return [text];
@@ -55,82 +44,65 @@ function revealSteps(text) {
   for (let i = perStep; i < lines.length; i += perStep) {
     steps.push(lines.slice(0, i).join("\n"));
   }
-  steps.push(text);
+  steps.push(text); // always finish with the full text
   return steps;
 }
 
-// Native streaming via chat.startStream / appendStream / stopStream.
-// Returns true on success, false if the APIs aren't available / failed.
-async function nativeStream({ client, channel, thread_ts, text, trailingBlocks }) {
-  if (typeof client.chat.startStream !== "function") {
-    console.log("[stream] native APIs unavailable → emulated");
-    return false;
-  }
-  if (!thread_ts) {
-    console.log("[stream] no thread_ts → emulated (native streaming needs a thread)");
-    return false;
-  }
-  const md = toMarkdown(text);
-  const chunks = streamChunks(md);
-  try {
-    const started = await client.chat.startStream({
-      channel,
-      thread_ts,
-      chunks: [{ type: "markdown_text", markdown_text: chunks[0] }],
-    });
-    const message_ts = started.ts;
-
-    for (let i = 1; i < chunks.length; i++) {
-      await client.chat.appendStream({
+async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], skipLoading = false }) {
+  // ── Optional native streaming path (off by default) ───────────────────────
+  if (process.env.FAB_NATIVE_STREAM === "1" && typeof client.chat.startStream === "function") {
+    try {
+      const started = await client.chat.startStream({
         channel,
-        message_ts,
         thread_ts,
-        chunks: [{ type: "markdown_text", markdown_text: chunks[i] }],
+        chunks: [{ type: "markdown_text", markdown_text: text }],
       });
-      await sleep(120); // small gap so the append is visibly progressive
+      await client.chat.stopStream({ channel, message_ts: started.ts, thread_ts });
+      if (trailingBlocks.length) {
+        await client.chat.postMessage({ channel, thread_ts, blocks: trailingBlocks, text: "Details" });
+      }
+      return;
+    } catch (err) {
+      // Fall through to the emulated experience.
     }
-
-    // Blocks are only allowed in stopStream — attach the chart/footer here.
-    await client.chat.stopStream({
-      channel,
-      message_ts,
-      thread_ts,
-      ...(trailingBlocks && trailingBlocks.length ? { blocks: trailingBlocks } : {}),
-    });
-    console.log("[stream] native streaming OK");
-    return true;
-  } catch (err) {
-    console.error("[stream] native streaming failed → emulated:", err && err.data ? err.data.error : err.message);
-    return false;
   }
-}
 
-// Emulated fallback: post a loading message, then progressively edit it.
-async function emulatedStream({ client, channel, thread_ts, text, trailingBlocks }) {
+  // ── 1. Loading status ─────────────────────────────────────────────────────
+  // When skipLoading is set, the caller already showed a loading indicator
+  // (e.g. assistant.threads.setStatus) and held it — go straight to the text.
   const posted = await client.chat.postMessage({
     channel,
     thread_ts,
-    text: "Analyzing CX intelligence…",
-    blocks: [LOADING_BLOCK],
+    text: skipLoading ? plain(text) : "Analyzing CX intelligence…",
+    blocks: skipLoading
+      ? [{ type: "section", text: { type: "mrkdwn", text } }]
+      : [LOADING_BLOCK],
   });
   const ts = posted.ts;
-  await sleep(LOADING_HOLD_MS);
 
-  const steps = revealSteps(text);
-  for (let i = 0; i < steps.length; i++) {
-    const isLast = i === steps.length - 1;
-    await client.chat.update({
-      channel,
-      ts,
-      text: plain(steps[i]),
-      blocks: isLast
-        ? [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }]
-        : [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }, TYPING_BLOCK],
-    });
-    if (!isLast) await sleep(STEP_MS);
+  // When the caller already showed & held a loading indicator (native
+  // setStatus), the full text was posted above — don't reveal/stream again.
+  if (!skipLoading) {
+    await sleep(LOADING_HOLD_MS);
+
+    // ── 2. Reveal the text in a few smooth steps (typing indicator below) ───
+    const steps = revealSteps(text);
+    for (let i = 0; i < steps.length; i++) {
+      const isLast = i === steps.length - 1;
+      await client.chat.update({
+        channel,
+        ts,
+        text: plain(steps[i]),
+        blocks: isLast
+          ? [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }]
+          : [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }, TYPING_BLOCK],
+      });
+      if (!isLast) await sleep(STEP_MS);
+    }
   }
 
-  if (trailingBlocks && trailingBlocks.length) {
+  // ── 3. Append chart / footer blocks to the finished message ───────────────
+  if (trailingBlocks.length) {
     await client.chat.update({
       channel,
       ts,
@@ -138,12 +110,6 @@ async function emulatedStream({ client, channel, thread_ts, text, trailingBlocks
       blocks: [{ type: "section", text: { type: "mrkdwn", text } }, ...trailingBlocks],
     });
   }
-}
-
-// Stream a reply: native streaming APIs first, emulated reveal as fallback.
-async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [] }) {
-  const ok = await nativeStream({ client, channel, thread_ts, text, trailingBlocks });
-  if (!ok) await emulatedStream({ client, channel, thread_ts, text, trailingBlocks });
 }
 
 module.exports = { streamReply, revealSteps };

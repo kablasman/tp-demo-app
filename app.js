@@ -26,6 +26,13 @@ const app = new App({
   port: process.env.PORT || 3000,
 });
 
+// ── TEMP DIAGNOSTIC: log every inbound event type (remove after debugging) ──
+app.use(async ({ body, next }) => {
+  const t = body && (body.event ? `event:${body.event.type}${body.event.channel_type ? `/${body.event.channel_type}` : ""}` : body.type);
+  console.log(`[inbound] ${t || "unknown"}`);
+  await next();
+});
+
 // ── Assistant container (native loading + streaming in the Messages tab) ─────
 // Handles DMs/agent-thread messages. Channel @mentions are handled separately.
 app.assistant(assistant);

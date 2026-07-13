@@ -68,6 +68,7 @@ async function botIsInThread({ client, channel, thread_ts, botUserId }) {
 function register(app) {
   // @mention in a channel or in an alert thread — starts a threaded conversation.
   app.event("app_mention", async ({ event, client, context, logger }) => {
+    console.log(`[handler] app_mention ts=${event.ts} thread_ts=${event.thread_ts}`);
     try {
       await respondInThread({
         client,
@@ -87,9 +88,12 @@ function register(app) {
   app.event("message", async ({ event, client, context, logger }) => {
     // Only channel/group thread replies from real users.
     if (event.channel_type !== "channel" && event.channel_type !== "group") return;
-    if (event.subtype || event.bot_id) return;        // ignore edits, bot posts, joins
+    if (event.subtype || event.bot_id || event.app_id) return; // ignore edits, bot/app posts, joins
+    if (event.user && context.botUserId && event.user === context.botUserId) return; // never react to ourselves
     if (!event.thread_ts || event.thread_ts === event.ts) return; // must be a reply in a thread
-    if (event.text && event.text.includes(`<@${context.botUserId}>`)) return; // handled by app_mention
+    // Any message that mentions the bot is handled by app_mention — skip here to
+    // avoid a double reply. Guard even if botUserId is missing.
+    if (event.text && /<@[A-Z0-9]+>/.test(event.text) && context.botUserId && event.text.includes(`<@${context.botUserId}>`)) return;
 
     try {
       const inThread = await botIsInThread({
@@ -100,6 +104,7 @@ function register(app) {
       });
       if (!inThread) return; // not our conversation — stay quiet
 
+      console.log(`[handler] message(thread) ts=${event.ts} thread_ts=${event.thread_ts}`);
       await respondInThread({
         client,
         logger,

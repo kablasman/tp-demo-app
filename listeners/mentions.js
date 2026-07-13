@@ -12,30 +12,19 @@ const { streamReply } = require("../streaming");
 
 // Post a reply into a thread with the native loading indicator (held 5s) and
 // streamed text, falling back gracefully when setStatus isn't available.
-async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
-  let statusShown = false;
-  try {
-    await client.assistant.threads.setStatus({
-      channel_id: channel,
-      thread_ts,
-      status: "Analyzing CX intelligence…",
-    });
-    statusShown = true;
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  } catch (e) {
-    logger.info("assistant.threads.setStatus unavailable, using fallback loader");
-  }
-
+async function respondInThread({ client, logger, channel, thread_ts, rawText, user, teamId }) {
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
-
-  if (statusShown) {
-    try {
-      await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
-    } catch (e) {
-      /* no-op */
-    }
-  }
+  // Native streaming (the shimmer) posts into the thread. Channel streams
+  // require recipient_user_id + recipient_team_id (per chat.startStream docs).
+  await streamReply({
+    client,
+    channel,
+    thread_ts,
+    text,
+    trailingBlocks,
+    recipientUserId: user,
+    recipientTeamId: teamId,
+  });
 }
 
 // Has the bot already posted in this thread? (i.e. did it start/join the convo)
@@ -50,7 +39,7 @@ async function botIsInThread({ client, channel, thread_ts, botUserId }) {
 
 function register(app) {
   // @mention in a channel or in an alert thread — starts a threaded conversation.
-  app.event("app_mention", async ({ event, client, logger }) => {
+  app.event("app_mention", async ({ event, client, context, logger }) => {
     try {
       await respondInThread({
         client,
@@ -59,6 +48,7 @@ function register(app) {
         thread_ts: event.thread_ts || event.ts,
         rawText: event.text,
         user: event.user,
+        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("app_mention handler failed:", error);
@@ -89,6 +79,7 @@ function register(app) {
         thread_ts: event.thread_ts,
         rawText: event.text,
         user: event.user,
+        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("thread follow-up handler failed:", error);

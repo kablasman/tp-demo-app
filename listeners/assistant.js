@@ -38,7 +38,7 @@ const assistant = new Assistant({
       await setTitle(message.text);
       // Native loading indicator — held for 5s before the response streams.
       await setStatus({
-        status: "Analyzing CX intelligence…",
+        status: "analyzing CX intelligence…",
         loading_messages: [
           "Pulling omnichannel metrics…",
           "Checking predictive SLA signals…",

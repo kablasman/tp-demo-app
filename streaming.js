@@ -55,9 +55,10 @@ function revealSteps(text) {
   return steps;
 }
 
-async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], skipLoading = false }) {
+async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], recipientUserId, recipientTeamId }) {
   // ── Native token streaming (the shimmer) — default path ───────────────────
-  // Requires a thread_ts (startStream ties the stream to a thread).
+  // Requires a thread_ts (startStream ties the stream to a thread). Streaming
+  // into a channel also requires recipient_user_id + recipient_team_id.
   if (thread_ts && typeof client.chat.startStream === "function") {
     try {
       const md = toMarkdown(text);
@@ -65,6 +66,8 @@ async function streamReply({ client, channel, thread_ts, text, trailingBlocks = 
       const started = await client.chat.startStream({
         channel,
         thread_ts,
+        ...(recipientUserId ? { recipient_user_id: recipientUserId } : {}),
+        ...(recipientTeamId ? { recipient_team_id: recipientTeamId } : {}),
         chunks: [{ type: "markdown_text", markdown_text: chunks[0] }],
       });
       for (let i = 1; i < chunks.length; i++) {

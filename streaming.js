@@ -7,7 +7,8 @@
 // revealed in a few smooth steps with a subtle typing indicator (no block
 // cursor), then any chart blocks appended at the end.
 //
-// Set FAB_NATIVE_STREAM=1 to attempt the native streaming APIs instead.
+// Native streaming (chat.startStream) is the default path when a thread_ts is
+// present; the static/emulated reveal is only the fallback.
 // https://docs.slack.dev/ai/developing-agents/
 // ---------------------------------------------------------------------------
 
@@ -34,6 +35,12 @@ function plain(text) {
   return text.replace(/[*_>`]/g, "");
 }
 
+// Slack mrkdwn uses *single* asterisks for bold, but markdown_text (the
+// streaming format) reads *single* as italic — promote to **double**.
+function toMarkdown(text) {
+  return text.replace(/\*([^*\n]+)\*/g, "**$1**");
+}
+
 // Break text into at most MAX_STEPS cumulative reveals, splitting on line
 // boundaries so we never cut a word or a bullet in half.
 function revealSteps(text) {
@@ -49,22 +56,41 @@ function revealSteps(text) {
 }
 
 async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], skipLoading = false }) {
-  // ── Optional native streaming path (off by default) ───────────────────────
-  if (process.env.FAB_NATIVE_STREAM === "1" && typeof client.chat.startStream === "function") {
+  // ── Native token streaming (the shimmer) — default path ───────────────────
+  // Requires a thread_ts (startStream ties the stream to a thread).
+  if (thread_ts && typeof client.chat.startStream === "function") {
     try {
+      const md = toMarkdown(text);
+      const chunks = md.split("\n\n").filter(Boolean).map((p, i) => (i ? "\n\n" : "") + p);
       const started = await client.chat.startStream({
         channel,
         thread_ts,
-        chunks: [{ type: "markdown_text", markdown_text: text }],
+        chunks: [{ type: "markdown_text", markdown_text: chunks[0] }],
       });
-      await client.chat.stopStream({ channel, message_ts: started.ts, thread_ts });
-      if (trailingBlocks.length) {
-        await client.chat.postMessage({ channel, thread_ts, blocks: trailingBlocks, text: "Details" });
+      for (let i = 1; i < chunks.length; i++) {
+        await client.chat.appendStream({
+          channel,
+          message_ts: started.ts,
+          thread_ts,
+          chunks: [{ type: "markdown_text", markdown_text: chunks[i] }],
+        });
+        await sleep(150);
       }
+      // Blocks (chart/footer) are only allowed in stopStream.
+      await client.chat.stopStream({
+        channel,
+        message_ts: started.ts,
+        thread_ts,
+        ...(trailingBlocks.length ? { blocks: trailingBlocks } : {}),
+      });
+      console.log("[stream] native streaming OK");
       return;
     } catch (err) {
-      // Fall through to the emulated experience.
+      console.error("[stream] native streaming failed → fallback:", err && err.data ? err.data.error : err.message);
+      // Fall through to the static/emulated path.
     }
+  } else {
+    console.log(`[stream] native streaming skipped (thread_ts=${!!thread_ts}, startStream=${typeof client.chat.startStream === "function"})`);
   }
 
   // ── 1. Loading status ─────────────────────────────────────────────────────

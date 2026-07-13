@@ -12,20 +12,24 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply into a thread with the native loading indicator (held 5s) and
-// streamed text, falling back gracefully when setStatus isn't available.
+// Post a reply with a loading indicator (held 5s) and streamed text.
+// The native assistant.threads.setStatus needs a thread_ts, so it's only used
+// for threaded surfaces (@mention / thread follow-ups). For top-level DMs we
+// go straight to the emulated loader in streamReply — same visible behavior.
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
   let statusShown = false;
-  try {
-    await client.assistant.threads.setStatus({
-      channel_id: channel,
-      thread_ts,
-      status: "Analyzing CX intelligence…",
-    });
-    statusShown = true;
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  } catch (e) {
-    logger.info("assistant.threads.setStatus unavailable, using fallback loader");
+  if (thread_ts) {
+    try {
+      await client.assistant.threads.setStatus({
+        channel_id: channel,
+        thread_ts,
+        status: "Analyzing CX intelligence…",
+      });
+      statusShown = true;
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    } catch (e) {
+      logger.info("assistant.threads.setStatus unavailable, using fallback loader");
+    }
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
@@ -70,12 +74,10 @@ function register(app) {
   // Direct messages in the Messages tab — respond freely (no @mention needed),
   // mirroring the @mention streaming (loading status + streamed reveal + chart).
   app.event("message", async ({ event, client, logger }) => {
-    console.log(`[dm] message.im received: channel_type=${event.channel_type} subtype=${event.subtype} bot_id=${event.bot_id} text=${JSON.stringify(event.text)}`);
     if (event.channel_type !== "im") return;
     if (event.subtype || event.bot_id) return; // ignore edits, bot posts, joins
 
     try {
-      console.log("[dm] handling DM → responding");
       await respondInThread({
         client,
         logger,
@@ -85,9 +87,8 @@ function register(app) {
         rawText: event.text,
         user: event.user,
       });
-      console.log("[dm] response sent OK");
     } catch (error) {
-      console.error("[dm] DM handler failed:", error && error.data ? error.data : error);
+      logger.error("DM handler failed:", error);
     }
   });
 

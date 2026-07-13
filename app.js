@@ -25,13 +25,6 @@ const app = new App({
   port: process.env.PORT || 3000,
 });
 
-// ── TEMP DIAGNOSTIC: log every inbound event type (remove after debugging) ──
-app.use(async ({ body, next }) => {
-  const t = body && (body.event ? `event:${body.event.type}${body.event.channel_type ? `/${body.event.channel_type}` : ""}` : body.type);
-  console.log(`[inbound] ${t || "unknown"}`);
-  await next();
-});
-
 // ── Register feature listeners ──────────────────────────────────────────────
 // DMs are handled directly by the message.im listener in listeners/mentions.js
 // (the Assistant container was flaky at invoking userMessage, so we own DMs).

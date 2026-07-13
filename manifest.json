@@ -1,0 +1,65 @@
+{
+  "display_information": {
+    "name": "TP Agent",
+    "description": "Hybrid AI for human-in-the-loop CX workflows — alerts, agent-assist, and CX intelligence in Slack.",
+    "background_color": "#4a4a6a",
+    "long_description": "TP Agent brings Teleperformance's CX intelligence into Slack. Get real-time Alerts & Notifications (anomaly and predictive-SLA driven) pushed into your channels with suggested actions, ask the assistant about omnichannel metrics via @mention or DM, swarm around an alert with Human-In-The-Loop escalation, and provision custom AI agents to a channel from your roster. Powered by the TP Orchestrator: Routing & Skilling, Predictive SLA Tracking, and RealTime Monitoring."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "agent_view": {},
+    "bot_user": {
+      "display_name": "TP Agent",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/fab-digest",
+        "description": "Post or schedule a daily CX digest in this channel",
+        "usage_hint": "[now | on [minutes] | off]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "assistant_thread_started",
+        "assistant_thread_context_changed",
+        "message.channels",
+        "message.groups",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

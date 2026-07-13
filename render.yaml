@@ -1,0 +1,17 @@
+# Render blueprint — always-on Socket Mode Slack app.
+# A background worker (not a web service): Socket Mode holds an outbound
+# WebSocket, so there's no HTTP port to serve, and it must never sleep.
+services:
+  - type: worker
+    name: tp-agent-slack
+    runtime: node
+    plan: starter          # smallest always-on paid tier (free tier sleeps)
+    buildCommand: npm ci
+    startCommand: npm start
+    envVars:
+      - key: SLACK_BOT_TOKEN
+        sync: false          # set in the Render dashboard (secret)
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false

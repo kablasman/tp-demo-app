@@ -1,0 +1,19 @@
+{
+  "name": "tp-fab-connect-slack",
+  "version": "1.0.0",
+  "description": "TP Agent — Slack integration prototype (CX intelligence, alerts, agent-assist)",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "app.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.6.0",
+    "dotenv": "^17.2.3"
+  }
+}

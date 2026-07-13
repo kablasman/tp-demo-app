@@ -1,6 +1,6 @@
 # TP Agent — Slack Prototype
 
-A clickable Slack integration prototype for **TP Agent** (Teleperformance's "Hybrid AI for human-in-the-loop CX workflows"). It demonstrates how the TP.ai platform can use Slack as an interaction channel: pushing CX **Alerts / Notifications** into channels, hosting a conversational assistant over **Conversation Intelligence** data, letting operators **swarm** on an alert (Human-In-The-Loop), and provisioning custom AI agents from a roster.
+A clickable Slack integration prototype for **TP Agent** (Teleperformance's "Hybrid AI for human-in-the-loop CX workflows"). It demonstrates how the TP.ai platform can use Slack as an interaction channel: pushing CX **Alerts / Notifications** into channels, hosting a conversational assistant over **Conversation Intelligence** data, letting operators **swarm** on an alert (Human-In-The-Loop), and pushing a scheduled CX digest.
 
 Built with [Slack Bolt](https://tools.slack.dev/bolt-js/) in **Socket Mode**. All CX data is scripted mock data — deterministic, no external AI, no latency, safe for live demos.
 
@@ -8,13 +8,29 @@ Built with [Slack Bolt](https://tools.slack.dev/bolt-js/) in **Socket Mode**. Al
 
 | Surface | What it does |
 |---|---|
-| **App Home** | CX intelligence dashboard: KPIs, per-channel performance, active alerts, a 7-day volume chart, and an *Add Agent* button. |
-| **`/fab-alert [id]`** | Posts a rich Alert / Notification (anomaly / Predictive SLA) to the channel — with a trend chart and *suggested action* buttons. |
-| **@mention / DM** | Ask about CX metrics (e.g. *"chat volume today"*, *"CSAT for email"*, *"what's driving the claims alert?"*). Mention it in an alert thread to swarm. |
-| **`/fab-add-agent`** | Modal to provision a custom AI agent (name, skill level, Collaboration Mode, channel) into a channel. |
-| **`/fab`** | Menu / entry point. |
+| **App Home** | CX intelligence dashboard: KPIs, per-channel performance (`data_table`), and an **Active alerts** carousel. Each alert card has **View** (DMs the full alert) and **Send to channel**. |
+| **@mention** | Mention the bot in a channel or alert thread to ask about CX metrics; it streams a response with a loading status and native charts. Follow-up replies in the same thread are answered automatically (no re-mention). |
+| **DM / Assistant** | The Assistant container (Messages tab) with suggested prompts, native `setStatus` loading, and streamed replies. |
+| **Send to channel** | From a Home alert card, a modal (public-channel picker + optional rich-text note) posts the full alert — chart + suggested-action buttons — to a channel. |
+| **`/fab-digest`** | Post or schedule a **Daily CX Digest** (KPIs + active alerts) to a channel. |
 
-Alert ids: `claims`, `billing`, `cancellation`.
+### Alerts
+Five mock alerts of varying severity power the Home carousel and the digest: `claims` (Critical), `billing` (High), `cancellation` (High), `onboarding` (Medium), `ordertracking` (Low). Each has a hyperlinked title (links to an example TP dashboard URL), a native trend chart with a threshold line, and suggested-action buttons (Re-route to CE / Deploy macro / Escalate to human / Dismiss).
+
+### What you can ask the assistant
+- *"chat volume today"* — volume + week-over-week trend
+- *"CSAT for email"* — CSAT, sentiment, handle time, containment
+- *"CSAT by channel"* — compare all channels
+- *"collaboration mode breakdown"* — Agent↔Human mix (pie)
+- *"what's driving the claims alert?"* — root-cause deep-dive
+- *"which journeys are at risk?"* — journey health
+- *"give me an overview"* — today's operations at a glance
+
+### `/fab-digest` subcommands
+- `/fab-digest now` — post the digest immediately
+- `/fab-digest on [minutes]` — auto-post to this channel every N minutes (default 60)
+- `/fab-digest off` — stop the schedule
+- `/fab-digest` — show status + usage
 
 ## Setup
 
@@ -28,7 +44,7 @@ Alert ids: `claims`, `billing`, `cancellation`.
 2. **Create the Slack app from the manifest**
    - Go to <https://api.slack.com/apps> → *Create New App* → *From a manifest*.
    - Pick your workspace and paste the contents of [`manifest.json`](./manifest.json).
-   - (Socket Mode, App Home, slash commands, scopes, and event subscriptions are all pre-configured.)
+   - Socket Mode, App Home, the Agents & Assistants view, slash command, scopes, and event subscriptions are all pre-configured.
 
 3. **Generate tokens**
    - **Bot token** (`xoxb-…`): *OAuth & Permissions* → *Install to Workspace*.
@@ -47,35 +63,43 @@ Alert ids: `claims`, `billing`, `cancellation`.
    ```
    You should see `⚡️ TP Agent is running (Socket Mode)`.
 
-## Live demo script
+> Tip: invite the bot to your demo channel (`/invite @TP Agent`) so it can post alerts and digests there. After editing `manifest.json`, re-save it in the app config and **reinstall** the app so scope/command/event changes take effect.
 
-1. **Dashboard** — Open the app's **Home** tab. KPIs, channel breakdown, the volume chart, and the active alert list render.
-2. **Post an alert** — In a channel the bot is in, run `/fab-alert claims`. A *Critical* Claims Intake alert appears with a trend chart and suggested-action buttons.
-3. **Swarm** — @mention the app in that alert's thread: *"what's driving this?"* → it replies in-thread with the root-cause summary + chart.
-4. **DM** — DM the app *"chat volume today"* → metric answer with a 7-day trend chart.
-5. **Take an action** — Click **Reroute to senior CE** on the alert → the message updates in place: *"✅ Rerouted to senior CE by @you"*.
-6. **Add an agent** — Click **Add Agent to Slack** (Home tab) or run `/fab-add-agent` → fill in the modal → a provisioning confirmation posts to the chosen channel.
+## Always-on hosting (Render)
 
-> Tip: invite the bot to your demo channel (`/invite @TP Agent`) so it can post alerts and agent confirmations there.
+This repo includes [`render.yaml`](./render.yaml) configured as a **background worker** (Socket Mode holds an outbound WebSocket, so there's no HTTP port and it must never sleep).
+
+1. Push this repo to GitHub/GitLab.
+2. On [Render](https://dashboard.render.com): **New → Blueprint**, connect the repo (it reads `render.yaml`).
+3. Set `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET` in the service's Environment tab.
+4. Deploy, then check Logs for `⚡️ TP Agent is running`.
+5. Stop any local instance so two processes don't compete for the same Socket Mode connection.
+
+> The `starter` plan is used because Render's free tier sleeps, which drops the Socket Mode connection.
 
 ## Project structure
 
 ```
-app.js                 Bolt bootstrap + /fab menu; registers all listeners
-manifest.json          Slack app manifest (Socket Mode, scopes, commands)
-data.js                Mock CX dataset + helpers (channels, journeys, alerts, roster, NL matcher)
-charts.js              Native data_visualization block builders (line / bar)
-blocks.js              Block Kit builders (Home, alert, bot answer, Add Agent modal)
-bot.js                 Mention cleanup → scripted answer → blocks
+app.js                 Bolt bootstrap; registers all listeners + the Assistant
+manifest.json          Slack app manifest (Socket Mode, Agents view, scopes, /fab-digest)
+data.js                Mock CX dataset + helpers (channels, journeys, alerts, roster, NL matcher, chart specs)
+charts.js              Native data_visualization block builders + QuickChart image fallback
+blocks.js              Block Kit builders (Home dashboard, alert message, digest, bot answers, send-to-channel modal)
+bot.js                 Mention cleanup → scripted answer → blocks (reply / replyParts)
+streaming.js           Loading status + emulated text streaming for @mentions
+render.yaml            Render blueprint (background worker)
 listeners/
   home.js              app_home_opened → dashboard
-  interventions.js     /fab-alert → post alert
-  mentions.js          app_mention + DM → assistant replies
-  actions.js           button actions, Add Agent modal, menu buttons
+  mentions.js          app_mention + threaded follow-ups (conversations.replies)
+  assistant.js         Assistant container (DM): suggested prompts, setStatus, sayStream
+  actions.js           alert action buttons, View / Send-to-channel, send modal submit
+  digest.js            /fab-digest (now / on / off) + scheduling
 ```
 
 ## Notes & scope
 
-- **Charts & tables:** Uses Slack's native [`data_visualization`](https://docs.slack.dev/reference/block-kit/blocks/data-visualization-block/) block for trend charts and the [`data_table`](https://docs.slack.dev/reference/block-kit/blocks/data-table-block/) block for channel performance — no external image hosting.
-- **State:** The agent roster is in-memory only (resets on restart) — fine for a prototype.
-- **Out of scope (v1):** real LLM wiring, Canvases, real data ingestion/persistence, production HTTP deployment, Marketplace distribution.
+- **Charts & tables:** Uses Slack's native [`data_visualization`](https://docs.slack.dev/reference/block-kit/blocks/data-visualization-block/) block for charts and the [`data_table`](https://docs.slack.dev/reference/block-kit/blocks/data-table-block/) block for channel performance — no external image hosting. (These are newer blocks; the workspace/app must support them.)
+- **Streaming:** Real token streaming (`chat.startStream`) requires the Agents & Assistants feature enabled. The @mention path emulates a loading status + streamed reveal so it works without it; DMs use the native Assistant APIs.
+- **State:** Digest schedules and the agent roster are in-memory only (reset on restart) — fine for a prototype.
+- **Out of scope (v1):** real LLM wiring, Canvases, real data ingestion/persistence, HTTP-mode deployment, OAuth multi-workspace distribution, Marketplace listing.
+```

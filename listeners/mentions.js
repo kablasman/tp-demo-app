@@ -10,12 +10,27 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply into a thread with the native loading indicator (held 5s) and
-// streamed text, falling back gracefully when setStatus isn't available.
+// Post a reply: native "thinking" status (with rotating loading_messages),
+// then native token streaming (the shimmer), then clear the status.
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user, teamId }) {
+  try {
+    await client.assistant.threads.setStatus({
+      channel_id: channel,
+      thread_ts,
+      status: "Analyzing CX intelligence…",
+      loading_messages: [
+        "Pulling omnichannel metrics…",
+        "Checking predictive SLA signals…",
+        "Summarizing conversation intelligence…",
+      ],
+    });
+  } catch (e) {
+    logger.info("setStatus failed:", e.data ? e.data.error : e.message);
+  }
+
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  // Native streaming (the shimmer) posts into the thread. Channel streams
-  // require recipient_user_id + recipient_team_id (per chat.startStream docs).
+  // Native streaming (the shimmer). Channel streams require
+  // recipient_user_id + recipient_team_id (per chat.startStream docs).
   await streamReply({
     client,
     channel,
@@ -25,6 +40,12 @@ async function respondInThread({ client, logger, channel, thread_ts, rawText, us
     recipientUserId: user,
     recipientTeamId: teamId,
   });
+
+  try {
+    await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
+  } catch (e) {
+    /* no-op — clears automatically when the message posts */
+  }
 }
 
 // Has the bot already posted in this thread? (i.e. did it start/join the convo)

@@ -62,20 +62,21 @@ async function streamReply({ client, channel, thread_ts, text, trailingBlocks = 
   if (thread_ts && typeof client.chat.startStream === "function") {
     try {
       const md = toMarkdown(text);
-      const chunks = md.split("\n\n").filter(Boolean).map((p, i) => (i ? "\n\n" : "") + p);
+      // Cumulative append deltas on paragraph boundaries so the shimmer advances.
+      const parts = md.split("\n\n").filter(Boolean).map((p, i) => (i ? "\n\n" : "") + p);
       const started = await client.chat.startStream({
         channel,
         thread_ts,
         ...(recipientUserId ? { recipient_user_id: recipientUserId } : {}),
         ...(recipientTeamId ? { recipient_team_id: recipientTeamId } : {}),
-        chunks: [{ type: "markdown_text", markdown_text: chunks[0] }],
+        markdown_text: parts[0],
       });
-      for (let i = 1; i < chunks.length; i++) {
+      for (let i = 1; i < parts.length; i++) {
         await client.chat.appendStream({
           channel,
           message_ts: started.ts,
           thread_ts,
-          chunks: [{ type: "markdown_text", markdown_text: chunks[i] }],
+          markdown_text: parts[i],
         });
         await sleep(150);
       }
@@ -90,31 +91,25 @@ async function streamReply({ client, channel, thread_ts, text, trailingBlocks = 
       return;
     } catch (err) {
       console.error("[stream] native streaming failed → fallback:", err && err.data ? err.data.error : err.message);
-      // Fall through to the static/emulated path.
+      // Fall through to the static reveal.
     }
   } else {
     console.log(`[stream] native streaming skipped (thread_ts=${!!thread_ts}, startStream=${typeof client.chat.startStream === "function"})`);
   }
 
-  // ── 1. Loading status ─────────────────────────────────────────────────────
-  // When skipLoading is set, the caller already showed a loading indicator
-  // (e.g. assistant.threads.setStatus) and held it — go straight to the text.
+  // ── Fallback: loading block held 5s, then a chunked reveal ─────────────────
   const posted = await client.chat.postMessage({
     channel,
     thread_ts,
-    text: skipLoading ? plain(text) : "Analyzing CX intelligence…",
-    blocks: skipLoading
-      ? [{ type: "section", text: { type: "mrkdwn", text } }]
-      : [LOADING_BLOCK],
+    text: "Analyzing CX intelligence…",
+    blocks: [LOADING_BLOCK],
   });
   const ts = posted.ts;
 
-  // When the caller already showed & held a loading indicator (native
-  // setStatus), the full text was posted above — don't reveal/stream again.
-  if (!skipLoading) {
+  {
     await sleep(LOADING_HOLD_MS);
 
-    // ── 2. Reveal the text in a few smooth steps (typing indicator below) ───
+    // Reveal the text in a few smooth steps (typing indicator below).
     const steps = revealSteps(text);
     for (let i = 0; i < steps.length; i++) {
       const isLast = i === steps.length - 1;

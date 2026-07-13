@@ -1,41 +1,40 @@
 // ---------------------------------------------------------------------------
-// Conversational bot — @mention, threaded follow-ups, and DMs
+// Conversational bot — channel @mention + threaded follow-ups
 // ---------------------------------------------------------------------------
-// Human → Agent surface:
-//   • app_mention  — mention the bot in a channel or alert thread
-//   • message (im) — direct messages in the Messages tab (no @mention needed)
-//   • message (channel/group) — follow-up replies in a thread the bot is in
-//     (detected via conversations.replies), so no re-mention is required.
-// All paths share respondInThread(): 5s loading status + streamed reply + chart.
+// Human → Agent surface. Mention the bot in a channel or alert thread to start
+// a conversation; after that, plain replies in the same thread are answered
+// automatically (no re-mention needed). We detect "the bot is in this thread"
+// via conversations.replies. DMs are handled by the Assistant container.
 // ---------------------------------------------------------------------------
 
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply: show the native shimmer loading indicator via
-// assistant.threads.setStatus (works for mentions with chat:write), then stream
-// the response with chat.*Stream, then clear the status.
-// https://docs.slack.dev/ai/developing-agents/#loading-state
+// Post a reply into a thread with the native loading indicator (held 5s) and
+// streamed text, falling back gracefully when setStatus isn't available.
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
-  // Native "thinking" shimmer in the thread.
+  let statusShown = false;
   try {
     await client.assistant.threads.setStatus({
       channel_id: channel,
       thread_ts,
       status: "Analyzing CX intelligence…",
     });
+    statusShown = true;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
   } catch (e) {
-    logger.info("setStatus failed:", e.data ? e.data.error : e.message);
+    logger.info("assistant.threads.setStatus unavailable, using fallback loader");
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  await streamReply({ client, channel, thread_ts, text, trailingBlocks });
+  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
 
-  // Clear the loading indicator once the response is posted.
-  try {
-    await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
-  } catch (e) {
-    /* no-op */
+  if (statusShown) {
+    try {
+      await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
+    } catch (e) {
+      /* no-op */
+    }
   }
 }
 
@@ -65,10 +64,6 @@ function register(app) {
       logger.error("app_mention handler failed:", error);
     }
   });
-
-  // NOTE: DMs (message.im) are handled by the Assistant container
-  // (listeners/assistant.js via app.assistant). Do NOT add a message.im handler
-  // here or DMs would be answered twice.
 
   // Follow-up replies in a thread the bot is part of — no @mention required.
   app.event("message", async ({ event, client, context, logger }) => {

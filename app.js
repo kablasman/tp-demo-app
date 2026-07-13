@@ -26,11 +26,8 @@ const app = new App({
   port: process.env.PORT || 3000,
 });
 
-// ── Assistant / agent container (Messages tab) ───────────────────────────────
-// Owns DMs: suggested prompts on open, native setStatus loading, and sayStream
-// token streaming. Registering this means DMs must NOT also be handled by a
-// message.im listener (that would double-reply) — mentions.js only handles
-// channel @mentions and thread follow-ups.
+// ── Assistant container (native loading + streaming in the Messages tab) ─────
+// Handles DMs/agent-thread messages. Channel @mentions are handled separately.
 app.assistant(assistant);
 
 // ── Register feature listeners ──────────────────────────────────────────────
@@ -41,26 +38,15 @@ digest.register(app);
 
 // ── Start ────────────────────────────────────────────────────────────────────
 (async () => {
-  try {
-    await app.start();
-    console.log("");
-    console.log("  ╔═══════════════════════════════════════════════════╗");
-    console.log("  ║   ⚡️ TP Agent is running (Socket Mode)   ║");
-    console.log("  ║                                                   ║");
-    console.log("  ║   /fab-digest       Scheduled CX digest           ║");
-    console.log("  ║   @mention / DM     Ask about CX metrics          ║");
-    console.log("  ║   Home tab          CX intelligence dashboard     ║");
-    console.log("  ║   Alert cards       Send / act on alerts          ║");
-    console.log("  ╚═══════════════════════════════════════════════════╝");
-    console.log("");
-  } catch (err) {
-    // Surface the real reason in logs (e.g. bad/missing tokens) instead of a
-    // bare stack trace, so Render logs make the failure obvious.
-    console.error("[fatal] Slack connection failed — check SLACK_* env vars:", err.data && err.data.error ? err.data.error : err.message);
-  }
+  await app.start();
+  console.log("");
+  console.log("  ╔═══════════════════════════════════════════════════╗");
+  console.log("  ║   ⚡️ TP Agent is running (Socket Mode)   ║");
+  console.log("  ║                                                   ║");
+  console.log("  ║   /fab-digest       Scheduled CX digest           ║");
+  console.log("  ║   @mention / DM     Ask about CX metrics          ║");
+  console.log("  ║   Home tab          CX intelligence dashboard     ║");
+  console.log("  ║   Alert cards       Send / act on alerts          ║");
+  console.log("  ╚═══════════════════════════════════════════════════╝");
+  console.log("");
 })();
-
-// Surface async failures in logs instead of silently crashing the process.
-process.on("unhandledRejection", (reason) => {
-  console.error("[unhandledRejection]", reason && reason.message ? reason.message : reason);
-});

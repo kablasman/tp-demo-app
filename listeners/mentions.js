@@ -10,41 +10,31 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply: native "thinking" status (with rotating loading_messages),
-// then native token streaming (the shimmer), then clear the status.
-async function respondInThread({ client, logger, channel, thread_ts, rawText, user, teamId }) {
+// Post a reply into a thread with the native loading indicator (held 5s) and
+// streamed text, falling back gracefully when setStatus isn't available.
+async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
+  let statusShown = false;
   try {
     await client.assistant.threads.setStatus({
       channel_id: channel,
       thread_ts,
       status: "Analyzing CX intelligence…",
-      loading_messages: [
-        "Pulling omnichannel metrics…",
-        "Checking predictive SLA signals…",
-        "Summarizing conversation intelligence…",
-      ],
     });
+    statusShown = true;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
   } catch (e) {
-    logger.info("setStatus failed:", e.data ? e.data.error : e.message);
+    logger.info("assistant.threads.setStatus unavailable, using fallback loader");
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  // Native streaming (the shimmer). Channel streams require
-  // recipient_user_id + recipient_team_id (per chat.startStream docs).
-  await streamReply({
-    client,
-    channel,
-    thread_ts,
-    text,
-    trailingBlocks,
-    recipientUserId: user,
-    recipientTeamId: teamId,
-  });
+  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
 
-  try {
-    await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
-  } catch (e) {
-    /* no-op — clears automatically when the message posts */
+  if (statusShown) {
+    try {
+      await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
+    } catch (e) {
+      /* no-op */
+    }
   }
 }
 
@@ -60,7 +50,7 @@ async function botIsInThread({ client, channel, thread_ts, botUserId }) {
 
 function register(app) {
   // @mention in a channel or in an alert thread — starts a threaded conversation.
-  app.event("app_mention", async ({ event, client, context, logger }) => {
+  app.event("app_mention", async ({ event, client, logger }) => {
     try {
       await respondInThread({
         client,
@@ -69,7 +59,6 @@ function register(app) {
         thread_ts: event.thread_ts || event.ts,
         rawText: event.text,
         user: event.user,
-        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("app_mention handler failed:", error);
@@ -100,7 +89,6 @@ function register(app) {
         thread_ts: event.thread_ts,
         rawText: event.text,
         user: event.user,
-        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("thread follow-up handler failed:", error);

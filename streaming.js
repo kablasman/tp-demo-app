@@ -7,8 +7,7 @@
 // revealed in a few smooth steps with a subtle typing indicator (no block
 // cursor), then any chart blocks appended at the end.
 //
-// Native streaming (chat.startStream) is the default path when a thread_ts is
-// present; the static/emulated reveal is only the fallback.
+// Set FAB_NATIVE_STREAM=1 to attempt the native streaming APIs instead.
 // https://docs.slack.dev/ai/developing-agents/
 // ---------------------------------------------------------------------------
 
@@ -35,12 +34,6 @@ function plain(text) {
   return text.replace(/[*_>`]/g, "");
 }
 
-// Slack mrkdwn uses *single* asterisks for bold, but markdown_text (the
-// streaming format) reads *single* as italic — promote to **double**.
-function toMarkdown(text) {
-  return text.replace(/\*([^*\n]+)\*/g, "**$1**");
-}
-
 // Break text into at most MAX_STEPS cumulative reveals, splitting on line
 // boundaries so we never cut a word or a bullet in half.
 function revealSteps(text) {
@@ -55,61 +48,44 @@ function revealSteps(text) {
   return steps;
 }
 
-async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], recipientUserId, recipientTeamId }) {
-  // ── Native token streaming (the shimmer) — default path ───────────────────
-  // Requires a thread_ts (startStream ties the stream to a thread). Streaming
-  // into a channel also requires recipient_user_id + recipient_team_id.
-  if (thread_ts && typeof client.chat.startStream === "function") {
+async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], skipLoading = false }) {
+  // ── Optional native streaming path (off by default) ───────────────────────
+  if (process.env.FAB_NATIVE_STREAM === "1" && typeof client.chat.startStream === "function") {
     try {
-      const md = toMarkdown(text);
-      // Cumulative append deltas on paragraph boundaries so the shimmer advances.
-      const parts = md.split("\n\n").filter(Boolean).map((p, i) => (i ? "\n\n" : "") + p);
       const started = await client.chat.startStream({
         channel,
         thread_ts,
-        ...(recipientUserId ? { recipient_user_id: recipientUserId } : {}),
-        ...(recipientTeamId ? { recipient_team_id: recipientTeamId } : {}),
-        markdown_text: parts[0],
+        chunks: [{ type: "markdown_text", markdown_text: text }],
       });
-      for (let i = 1; i < parts.length; i++) {
-        await client.chat.appendStream({
-          channel,
-          message_ts: started.ts,
-          thread_ts,
-          markdown_text: parts[i],
-        });
-        await sleep(150);
+      await client.chat.stopStream({ channel, message_ts: started.ts, thread_ts });
+      if (trailingBlocks.length) {
+        await client.chat.postMessage({ channel, thread_ts, blocks: trailingBlocks, text: "Details" });
       }
-      // Blocks (chart/footer) are only allowed in stopStream.
-      await client.chat.stopStream({
-        channel,
-        message_ts: started.ts,
-        thread_ts,
-        ...(trailingBlocks.length ? { blocks: trailingBlocks } : {}),
-      });
-      console.log("[stream] native streaming OK");
       return;
     } catch (err) {
-      console.error("[stream] native streaming failed → fallback:", err && err.data ? err.data.error : err.message);
-      // Fall through to the static reveal.
+      // Fall through to the emulated experience.
     }
-  } else {
-    console.log(`[stream] native streaming skipped (thread_ts=${!!thread_ts}, startStream=${typeof client.chat.startStream === "function"})`);
   }
 
-  // ── Fallback: loading block held 5s, then a chunked reveal ─────────────────
+  // ── 1. Loading status ─────────────────────────────────────────────────────
+  // When skipLoading is set, the caller already showed a loading indicator
+  // (e.g. assistant.threads.setStatus) and held it — go straight to the text.
   const posted = await client.chat.postMessage({
     channel,
     thread_ts,
-    text: "Analyzing CX intelligence…",
-    blocks: [LOADING_BLOCK],
+    text: skipLoading ? plain(text) : "Analyzing CX intelligence…",
+    blocks: skipLoading
+      ? [{ type: "section", text: { type: "mrkdwn", text } }]
+      : [LOADING_BLOCK],
   });
   const ts = posted.ts;
 
-  {
+  // When the caller already showed & held a loading indicator (native
+  // setStatus), the full text was posted above — don't reveal/stream again.
+  if (!skipLoading) {
     await sleep(LOADING_HOLD_MS);
 
-    // Reveal the text in a few smooth steps (typing indicator below).
+    // ── 2. Reveal the text in a few smooth steps (typing indicator below) ───
     const steps = revealSteps(text);
     for (let i = 0; i < steps.length; i++) {
       const isLast = i === steps.length - 1;

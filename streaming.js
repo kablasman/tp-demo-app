@@ -76,15 +76,16 @@ async function streamReply({
         ...(recipientTeamId ? { recipient_team_id: recipientTeamId } : {}),
         markdown_text: parts[0],
       });
+      // appendStream/stopStream take `ts` (the streamed message's ts), not message_ts.
+      const streamTs = started.ts;
       for (let i = 1; i < parts.length; i++) {
-        await client.chat.appendStream({ channel, message_ts: started.ts, thread_ts, markdown_text: parts[i] });
+        await client.chat.appendStream({ channel, ts: streamTs, markdown_text: parts[i] });
         await sleep(120);
       }
       // Blocks (chart/footer) are only allowed in stopStream.
       await client.chat.stopStream({
         channel,
-        message_ts: started.ts,
-        thread_ts,
+        ts: streamTs,
         ...(trailingBlocks.length ? { blocks: trailingBlocks } : {}),
       });
       console.log("[stream] native streaming OK");

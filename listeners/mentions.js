@@ -73,8 +73,10 @@ function register(app) {
         client,
         logger,
         channel: event.channel,
-        // Reply at the DM's top level (only thread if the user threaded).
-        thread_ts: event.thread_ts,
+        // Reply in a thread off the user's message. This gives the DM a
+        // thread_ts, which the native setStatus + chat.startStream APIs
+        // require (top-level DMs have none, forcing the emulated fallback).
+        thread_ts: event.thread_ts || event.ts,
         rawText: event.text,
         user: event.user,
       });

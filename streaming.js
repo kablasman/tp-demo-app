@@ -62,19 +62,31 @@ function revealSteps(text) {
 // Native streaming via chat.startStream / appendStream / stopStream.
 // Returns true on success, false if the APIs aren't available / failed.
 async function nativeStream({ client, channel, thread_ts, text, trailingBlocks }) {
-  if (typeof client.chat.startStream !== "function") return false;
+  if (typeof client.chat.startStream !== "function") {
+    console.log("[stream] native APIs unavailable → emulated");
+    return false;
+  }
+  if (!thread_ts) {
+    console.log("[stream] no thread_ts → emulated (native streaming needs a thread)");
+    return false;
+  }
   const md = toMarkdown(text);
   const chunks = streamChunks(md);
   try {
     const started = await client.chat.startStream({
       channel,
       thread_ts,
-      markdown_text: chunks[0],
+      chunks: [{ type: "markdown_text", markdown_text: chunks[0] }],
     });
     const message_ts = started.ts;
 
     for (let i = 1; i < chunks.length; i++) {
-      await client.chat.appendStream({ channel, message_ts, thread_ts, markdown_text: chunks[i] });
+      await client.chat.appendStream({
+        channel,
+        message_ts,
+        thread_ts,
+        chunks: [{ type: "markdown_text", markdown_text: chunks[i] }],
+      });
       await sleep(120); // small gap so the append is visibly progressive
     }
 
@@ -85,8 +97,10 @@ async function nativeStream({ client, channel, thread_ts, text, trailingBlocks }
       thread_ts,
       ...(trailingBlocks && trailingBlocks.length ? { blocks: trailingBlocks } : {}),
     });
+    console.log("[stream] native streaming OK");
     return true;
   } catch (err) {
+    console.error("[stream] native streaming failed → emulated:", err && err.data ? err.data.error : err.message);
     return false;
   }
 }

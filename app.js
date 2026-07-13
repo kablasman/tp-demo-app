@@ -16,6 +16,7 @@ const home = require("./listeners/home");
 const mentions = require("./listeners/mentions");
 const actions = require("./listeners/actions");
 const digest = require("./listeners/digest");
+const { assistant } = require("./listeners/assistant");
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -25,33 +26,14 @@ const app = new App({
   port: process.env.PORT || 3000,
 });
 
-// ── Assistant/agent container: suggested prompts on DM open ──────────────────
-// We handle assistant_thread_started directly (rather than app.assistant(), whose
-// message.im handler would double-reply with our own DM handler). The actual
-// replies — with native setStatus loading + chat.*Stream streaming — are handled
-// by the message.im listener in listeners/mentions.js.
-app.event("assistant_thread_started", async ({ event, client, logger }) => {
-  try {
-    const { channel_id, thread_ts } = event.assistant_thread;
-    await client.assistant.threads.setSuggestedPrompts({
-      channel_id,
-      thread_ts,
-      title: "Try one of these:",
-      prompts: [
-        { title: "Overview", message: "give me an overview" },
-        { title: "CSAT by channel", message: "CSAT by channel" },
-        { title: "Collaboration mode breakdown", message: "collaboration mode breakdown" },
-        { title: "What's driving the claims alert?", message: "what's driving the claims alert?" },
-      ],
-    });
-  } catch (e) {
-    logger.error("assistant_thread_started failed:", e.data ? e.data.error : e.message);
-  }
-});
+// ── Assistant / agent container (Messages tab) ───────────────────────────────
+// Owns DMs: suggested prompts on open, native setStatus loading, and sayStream
+// token streaming. Registering this means DMs must NOT also be handled by a
+// message.im listener (that would double-reply) — mentions.js only handles
+// channel @mentions and thread follow-ups.
+app.assistant(assistant);
 
 // ── Register feature listeners ──────────────────────────────────────────────
-// DMs (message.im) are handled in listeners/mentions.js with native loading +
-// streaming — a single handler owns replies, so there are no duplicates.
 home.register(app);
 mentions.register(app);
 actions.register(app);

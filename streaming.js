@@ -67,49 +67,35 @@ async function streamReply({ client, channel, thread_ts, text, trailingBlocks = 
     }
   }
 
-  // ── 1. Loading status ─────────────────────────────────────────────────────
-  // When skipLoading is set, the caller already showed a loading indicator
-  // (e.g. assistant.threads.setStatus) and held it — go straight to the text.
-  const posted = await client.chat.postMessage({
-    channel,
-    thread_ts,
-    text: skipLoading ? plain(text) : "Analyzing CX intelligence…",
-    blocks: skipLoading
-      ? [{ type: "section", text: { type: "mrkdwn", text } }]
-      : [LOADING_BLOCK],
-  });
-  const ts = posted.ts;
-
-  // When the caller already showed & held a loading indicator (native
-  // setStatus), the full text was posted above — don't reveal/stream again.
-  if (!skipLoading) {
-    await sleep(LOADING_HOLD_MS);
-
-    // ── 2. Reveal the text in a few smooth steps (typing indicator below) ───
-    const steps = revealSteps(text);
-    for (let i = 0; i < steps.length; i++) {
-      const isLast = i === steps.length - 1;
-      await client.chat.update({
-        channel,
-        ts,
-        text: plain(steps[i]),
-        blocks: isLast
-          ? [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }]
-          : [{ type: "section", text: { type: "mrkdwn", text: steps[i] } }, TYPING_BLOCK],
-      });
-      if (!isLast) await sleep(STEP_MS);
-    }
-  }
-
-  // ── 3. Append chart / footer blocks to the finished message ───────────────
-  if (trailingBlocks.length) {
-    await client.chat.update({
+  // ── Loading indicator → hold 5s → post the full answer once ────────────────
+  // When skipLoading is set, the caller already showed & held the native
+  // assistant.threads.setStatus indicator, so post the answer immediately.
+  // Otherwise (e.g. a channel @mention, where setStatus isn't available) show
+  // our own loading block and hold 5s. Neither path does a chunked "typing"
+  // reveal — the answer appears in one shot after the loading state.
+  if (skipLoading) {
+    await client.chat.postMessage({
       channel,
-      ts,
+      thread_ts,
       text: plain(text),
       blocks: [{ type: "section", text: { type: "mrkdwn", text } }, ...trailingBlocks],
     });
+    return;
   }
+
+  const posted = await client.chat.postMessage({
+    channel,
+    thread_ts,
+    text: "Analyzing CX intelligence…",
+    blocks: [LOADING_BLOCK],
+  });
+  await sleep(LOADING_HOLD_MS);
+  await client.chat.update({
+    channel,
+    ts: posted.ts,
+    text: plain(text),
+    blocks: [{ type: "section", text: { type: "mrkdwn", text } }, ...trailingBlocks],
+  });
 }
 
 module.exports = { streamReply, revealSteps };

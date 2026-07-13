@@ -71,28 +71,9 @@ function register(app) {
     }
   });
 
-  // Direct messages in the Messages tab — respond freely (no @mention needed),
-  // mirroring the @mention streaming (loading status + streamed reveal + chart).
-  app.event("message", async ({ event, client, logger }) => {
-    if (event.channel_type !== "im") return;
-    if (event.subtype || event.bot_id) return; // ignore edits, bot posts, joins
-
-    try {
-      await respondInThread({
-        client,
-        logger,
-        channel: event.channel,
-        // Reply in a thread off the user's message. This gives the DM a
-        // thread_ts, which the native setStatus + chat.startStream APIs
-        // require (top-level DMs have none, forcing the emulated fallback).
-        thread_ts: event.thread_ts || event.ts,
-        rawText: event.text,
-        user: event.user,
-      });
-    } catch (error) {
-      logger.error("DM handler failed:", error);
-    }
-  });
+  // NOTE: DMs (message.im) are handled by the Assistant container
+  // (listeners/assistant.js via app.assistant). Do NOT add a message.im handler
+  // here or DMs would be answered twice.
 
   // Follow-up replies in a thread the bot is part of — no @mention required.
   app.event("message", async ({ event, client, context, logger }) => {

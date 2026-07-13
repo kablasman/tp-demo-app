@@ -53,19 +53,27 @@ const assistant = new Assistant({
       const md = text.replace(/\*([^*\n]+)\*/g, "**$1**");
 
       // Stream the text if sayStream is available; otherwise fall back to say().
+      console.log("[assistant] sayStream is", typeof sayStream);
       if (typeof sayStream === "function") {
-        const stream = sayStream();
-        // Append in a couple of chunks so it visibly streams.
-        const parts = md.split("\n\n");
-        if (parts.length > 1) {
-          for (let i = 0; i < parts.length; i++) {
-            await stream.append({ markdown_text: (i ? "\n\n" : "") + parts[i] });
+        try {
+          const stream = sayStream();
+          const parts = md.split("\n\n");
+          if (parts.length > 1) {
+            for (let i = 0; i < parts.length; i++) {
+              await stream.append({ markdown_text: (i ? "\n\n" : "") + parts[i] });
+            }
+          } else {
+            await stream.append({ markdown_text: md });
           }
-        } else {
-          await stream.append({ markdown_text: md });
+          await stream.stop();
+          console.log("[assistant] sayStream OK");
+        } catch (streamErr) {
+          console.error("[assistant] sayStream FAILED:", streamErr && streamErr.data ? JSON.stringify(streamErr.data) : streamErr.message);
+          // Fall back to a plain posted message so the user still gets a reply.
+          await say({ text: text.replace(/[*_>]/g, ""), blocks: [{ type: "section", text: { type: "mrkdwn", text } }] });
         }
-        await stream.stop();
       } else {
+        console.log("[assistant] sayStream unavailable → say()");
         await say({ text: text.replace(/[*_>]/g, ""), blocks: [{ type: "section", text: { type: "mrkdwn", text } }] });
       }
 

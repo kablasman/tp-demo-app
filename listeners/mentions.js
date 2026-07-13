@@ -1,10 +1,12 @@
 // ---------------------------------------------------------------------------
-// Conversational bot — channel @mention + threaded follow-ups
+// Conversational bot — @mention, threaded follow-ups, and DMs
 // ---------------------------------------------------------------------------
-// Human → Agent surface. Mention the bot in a channel or alert thread to start
-// a conversation; after that, plain replies in the same thread are answered
-// automatically (no re-mention needed). We detect "the bot is in this thread"
-// via conversations.replies. DMs are handled by the Assistant container.
+// Human → Agent surface:
+//   • app_mention  — mention the bot in a channel or alert thread
+//   • message (im) — direct messages in the Messages tab (no @mention needed)
+//   • message (channel/group) — follow-up replies in a thread the bot is in
+//     (detected via conversations.replies), so no re-mention is required.
+// All paths share respondInThread(): 5s loading status + streamed reply + chart.
 // ---------------------------------------------------------------------------
 
 const bot = require("../bot");
@@ -62,6 +64,27 @@ function register(app) {
       });
     } catch (error) {
       logger.error("app_mention handler failed:", error);
+    }
+  });
+
+  // Direct messages in the Messages tab — respond freely (no @mention needed),
+  // mirroring the @mention streaming (loading status + streamed reveal + chart).
+  app.event("message", async ({ event, client, logger }) => {
+    if (event.channel_type !== "im") return;
+    if (event.subtype || event.bot_id) return; // ignore edits, bot posts, joins
+
+    try {
+      await respondInThread({
+        client,
+        logger,
+        channel: event.channel,
+        // Reply at the DM's top level (only thread if the user threaded).
+        thread_ts: event.thread_ts,
+        rawText: event.text,
+        user: event.user,
+      });
+    } catch (error) {
+      logger.error("DM handler failed:", error);
     }
   });
 

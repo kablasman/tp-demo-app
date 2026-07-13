@@ -16,7 +16,6 @@ const home = require("./listeners/home");
 const mentions = require("./listeners/mentions");
 const actions = require("./listeners/actions");
 const digest = require("./listeners/digest");
-const { assistant } = require("./listeners/assistant");
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -33,11 +32,9 @@ app.use(async ({ body, next }) => {
   await next();
 });
 
-// ── Assistant container (native loading + streaming in the Messages tab) ─────
-// Handles DMs/agent-thread messages. Channel @mentions are handled separately.
-app.assistant(assistant);
-
 // ── Register feature listeners ──────────────────────────────────────────────
+// DMs are handled directly by the message.im listener in listeners/mentions.js
+// (the Assistant container was flaky at invoking userMessage, so we own DMs).
 home.register(app);
 mentions.register(app);
 actions.register(app);
@@ -45,15 +42,26 @@ digest.register(app);
 
 // ── Start ────────────────────────────────────────────────────────────────────
 (async () => {
-  await app.start();
-  console.log("");
-  console.log("  ╔═══════════════════════════════════════════════════╗");
-  console.log("  ║   ⚡️ TP Agent is running (Socket Mode)   ║");
-  console.log("  ║                                                   ║");
-  console.log("  ║   /fab-digest       Scheduled CX digest           ║");
-  console.log("  ║   @mention / DM     Ask about CX metrics          ║");
-  console.log("  ║   Home tab          CX intelligence dashboard     ║");
-  console.log("  ║   Alert cards       Send / act on alerts          ║");
-  console.log("  ╚═══════════════════════════════════════════════════╝");
-  console.log("");
+  try {
+    await app.start();
+    console.log("");
+    console.log("  ╔═══════════════════════════════════════════════════╗");
+    console.log("  ║   ⚡️ TP Agent is running (Socket Mode)   ║");
+    console.log("  ║                                                   ║");
+    console.log("  ║   /fab-digest       Scheduled CX digest           ║");
+    console.log("  ║   @mention / DM     Ask about CX metrics          ║");
+    console.log("  ║   Home tab          CX intelligence dashboard     ║");
+    console.log("  ║   Alert cards       Send / act on alerts          ║");
+    console.log("  ╚═══════════════════════════════════════════════════╝");
+    console.log("");
+  } catch (err) {
+    // Surface the real reason in logs (e.g. bad/missing tokens) instead of a
+    // bare stack trace, so Render logs make the failure obvious.
+    console.error("[fatal] Slack connection failed — check SLACK_* env vars:", err.data && err.data.error ? err.data.error : err.message);
+  }
 })();
+
+// Surface async failures in logs instead of silently crashing the process.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason && reason.message ? reason.message : reason);
+});

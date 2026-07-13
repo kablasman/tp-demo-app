@@ -12,7 +12,7 @@ const { streamReply } = require("../streaming");
 
 // Post a reply into a thread with the native loading indicator (held 5s) and
 // streamed text, falling back gracefully when setStatus isn't available.
-async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
+async function respondInThread({ client, logger, channel, thread_ts, rawText, user, teamId }) {
   let statusShown = false;
   try {
     await client.assistant.threads.setStatus({
@@ -33,7 +33,18 @@ async function respondInThread({ client, logger, channel, thread_ts, rawText, us
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
+  // Native streaming needs recipient ids for channel streams; on Grid the
+  // team id must be the specific workspace (teamId), not the org.
+  await streamReply({
+    client,
+    channel,
+    thread_ts,
+    text,
+    trailingBlocks,
+    skipLoading: statusShown,
+    recipientUserId: user,
+    recipientTeamId: teamId,
+  });
 
   if (statusShown) {
     try {
@@ -56,7 +67,7 @@ async function botIsInThread({ client, channel, thread_ts, botUserId }) {
 
 function register(app) {
   // @mention in a channel or in an alert thread — starts a threaded conversation.
-  app.event("app_mention", async ({ event, client, logger }) => {
+  app.event("app_mention", async ({ event, client, context, logger }) => {
     try {
       await respondInThread({
         client,
@@ -65,6 +76,7 @@ function register(app) {
         thread_ts: event.thread_ts || event.ts,
         rawText: event.text,
         user: event.user,
+        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("app_mention handler failed:", error);
@@ -95,6 +107,7 @@ function register(app) {
         thread_ts: event.thread_ts,
         rawText: event.text,
         user: event.user,
+        teamId: event.team || context.teamId,
       });
     } catch (error) {
       logger.error("thread follow-up handler failed:", error);

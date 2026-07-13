@@ -7,7 +7,8 @@
 // revealed in a few smooth steps with a subtle typing indicator (no block
 // cursor), then any chart blocks appended at the end.
 //
-// Set FAB_NATIVE_STREAM=1 to attempt the native streaming APIs instead.
+// Native streaming (chat.startStream) is the default path when a thread_ts is
+// present; the emulated reveal is the fallback if it fails.
 // https://docs.slack.dev/ai/developing-agents/
 // ---------------------------------------------------------------------------
 
@@ -48,22 +49,49 @@ function revealSteps(text) {
   return steps;
 }
 
-async function streamReply({ client, channel, thread_ts, text, trailingBlocks = [], skipLoading = false }) {
-  // ── Optional native streaming path (off by default) ───────────────────────
-  if (process.env.FAB_NATIVE_STREAM === "1" && typeof client.chat.startStream === "function") {
+async function streamReply({
+  client,
+  channel,
+  thread_ts,
+  text,
+  trailingBlocks = [],
+  skipLoading = false,
+  recipientUserId,
+  recipientTeamId,
+}) {
+  // ── Native token streaming (chat.startStream/appendStream/stopStream) ──────
+  // Requires a thread_ts. Streaming into a *channel* also requires
+  // recipient_user_id + recipient_team_id — and on Enterprise Grid the team id
+  // must be the specific workspace (event.team / context.teamId), not the org.
+  if (thread_ts && typeof client.chat.startStream === "function") {
     try {
+      // markdown_text uses **double** asterisks for bold (single = italic).
+      const md = text.replace(/\*([^*\n]+)\*/g, "**$1**");
+      const parts = md.split("\n\n").filter(Boolean).map((p, i) => (i ? "\n\n" : "") + p);
+
       const started = await client.chat.startStream({
         channel,
         thread_ts,
-        chunks: [{ type: "markdown_text", markdown_text: text }],
+        ...(recipientUserId ? { recipient_user_id: recipientUserId } : {}),
+        ...(recipientTeamId ? { recipient_team_id: recipientTeamId } : {}),
+        markdown_text: parts[0],
       });
-      await client.chat.stopStream({ channel, message_ts: started.ts, thread_ts });
-      if (trailingBlocks.length) {
-        await client.chat.postMessage({ channel, thread_ts, blocks: trailingBlocks, text: "Details" });
+      for (let i = 1; i < parts.length; i++) {
+        await client.chat.appendStream({ channel, message_ts: started.ts, thread_ts, markdown_text: parts[i] });
+        await sleep(120);
       }
+      // Blocks (chart/footer) are only allowed in stopStream.
+      await client.chat.stopStream({
+        channel,
+        message_ts: started.ts,
+        thread_ts,
+        ...(trailingBlocks.length ? { blocks: trailingBlocks } : {}),
+      });
+      console.log("[stream] native streaming OK");
       return;
     } catch (err) {
-      // Fall through to the emulated experience.
+      console.error("[stream] native streaming failed → fallback:", err && err.data ? JSON.stringify(err.data) : err.message);
+      // Fall through to the emulated reveal.
     }
   }
 

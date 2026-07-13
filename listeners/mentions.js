@@ -12,16 +12,26 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply with the emulated loading indicator (held ~5s) + streamed
-// reveal + chart. Used identically for @mentions, thread follow-ups, and DMs.
-//
-// We deliberately use the emulated reveal (streamReply) rather than the native
-// assistant.threads.setStatus: setStatus only shows a loading dot and, when it
-// succeeds, suppresses the streamed reveal — so it looks static unless real
-// token streaming (FAB_NATIVE_STREAM) is on. The emulated path streams visibly
-// on every surface, which is what we want.
+// Post a reply: native loading status (assistant.threads.setStatus) + native
+// text streaming (chat.startStream/appendStream/stopStream in streamReply).
+// Used for @mentions, thread follow-ups, and DMs.
+// https://docs.slack.dev/ai/developing-agents/#loading-state
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
+  // Show the native "thinking" indicator in the container. Requires a thread_ts.
+  if (thread_ts) {
+    try {
+      await client.assistant.threads.setStatus({
+        channel_id: channel,
+        thread_ts,
+        status: "Analyzing CX intelligence…",
+      });
+    } catch (e) {
+      logger.info("assistant.threads.setStatus unavailable:", e.data ? e.data.error : e.message);
+    }
+  }
+
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
+  // Streaming the reply automatically clears the loading status.
   await streamReply({ client, channel, thread_ts, text, trailingBlocks });
 }
 

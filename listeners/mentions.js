@@ -12,35 +12,30 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply: show the native "thinking" loading indicator
-// (assistant.threads.setStatus), hold it for 5s, then post the response.
+// Post a reply: show the native shimmer loading indicator via
+// assistant.threads.setStatus (works for mentions with chat:write), then stream
+// the response with chat.*Stream, then clear the status.
 // https://docs.slack.dev/ai/developing-agents/#loading-state
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
-  let statusShown = false;
-  if (thread_ts) {
-    try {
-      await client.assistant.threads.setStatus({
-        channel_id: channel,
-        thread_ts,
-        status: "Analyzing CX intelligence…",
-      });
-      statusShown = true;
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-    } catch (e) {
-      logger.info("assistant.threads.setStatus unavailable, using fallback loader");
-    }
+  // Native "thinking" shimmer in the thread.
+  try {
+    await client.assistant.threads.setStatus({
+      channel_id: channel,
+      thread_ts,
+      status: "Analyzing CX intelligence…",
+    });
+  } catch (e) {
+    logger.info("setStatus failed:", e.data ? e.data.error : e.message);
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
+  await streamReply({ client, channel, thread_ts, text, trailingBlocks });
 
-  if (statusShown) {
-    // Clear the loading indicator once the response is posted.
-    try {
-      await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
-    } catch (e) {
-      /* no-op */
-    }
+  // Clear the loading indicator once the response is posted.
+  try {
+    await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
+  } catch (e) {
+    /* no-op */
   }
 }
 

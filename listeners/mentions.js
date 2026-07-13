@@ -15,15 +15,17 @@ const { streamReply } = require("../streaming");
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
   let statusShown = false;
   try {
-    await client.assistant.threads.setStatus({
+    const r = await client.assistant.threads.setStatus({
       channel_id: channel,
       thread_ts,
       status: "Analyzing CX intelligence…",
     });
+    console.log("[setStatus] OK", JSON.stringify(r && r.ok));
     statusShown = true;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   } catch (e) {
-    logger.info("assistant.threads.setStatus unavailable, using fallback loader");
+    // Surface the REAL Slack error so we can see why the shimmer isn't showing.
+    console.error("[setStatus] FAILED:", e && e.data ? JSON.stringify(e.data) : (e && e.message));
   }
 
   const { text, trailingBlocks } = bot.replyParts(rawText, user);

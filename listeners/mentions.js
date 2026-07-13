@@ -12,36 +12,17 @@
 const bot = require("../bot");
 const { streamReply } = require("../streaming");
 
-// Post a reply with a loading indicator (held 5s) and streamed text.
-// The native assistant.threads.setStatus needs a thread_ts, so it's only used
-// for threaded surfaces (@mention / thread follow-ups). For top-level DMs we
-// go straight to the emulated loader in streamReply — same visible behavior.
+// Post a reply with the emulated loading indicator (held ~5s) + streamed
+// reveal + chart. Used identically for @mentions, thread follow-ups, and DMs.
+//
+// We deliberately use the emulated reveal (streamReply) rather than the native
+// assistant.threads.setStatus: setStatus only shows a loading dot and, when it
+// succeeds, suppresses the streamed reveal — so it looks static unless real
+// token streaming (FAB_NATIVE_STREAM) is on. The emulated path streams visibly
+// on every surface, which is what we want.
 async function respondInThread({ client, logger, channel, thread_ts, rawText, user }) {
-  let statusShown = false;
-  if (thread_ts) {
-    try {
-      await client.assistant.threads.setStatus({
-        channel_id: channel,
-        thread_ts,
-        status: "Analyzing CX intelligence…",
-      });
-      statusShown = true;
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-    } catch (e) {
-      logger.info("assistant.threads.setStatus unavailable, using fallback loader");
-    }
-  }
-
   const { text, trailingBlocks } = bot.replyParts(rawText, user);
-  await streamReply({ client, channel, thread_ts, text, trailingBlocks, skipLoading: statusShown });
-
-  if (statusShown) {
-    try {
-      await client.assistant.threads.setStatus({ channel_id: channel, thread_ts, status: "" });
-    } catch (e) {
-      /* no-op */
-    }
-  }
+  await streamReply({ client, channel, thread_ts, text, trailingBlocks });
 }
 
 // Has the bot already posted in this thread? (i.e. did it start/join the convo)
